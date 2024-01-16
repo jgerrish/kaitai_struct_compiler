@@ -93,6 +93,7 @@ case class JavaRuntimeConfig(
   * @param pythonPackage Python package name
   * @param nimModule Path of Nim runtime module
   * @param nimOpaque Directory of opaque Nim modules
+  * @param clispPackage Name of Common LISP runtime package
   */
 case class RuntimeConfig(
   autoRead: Boolean = true,
@@ -106,5 +107,6 @@ case class RuntimeConfig(
   phpNamespace: String = "",
   pythonPackage: String = "",
   nimModule: String = "kaitai_struct_nim_runtime",
-  nimOpaque: String = ""
+  nimOpaque: String = "",
+  clispPackage: String = "kaitai-struct-clisp-runtime"
 )
