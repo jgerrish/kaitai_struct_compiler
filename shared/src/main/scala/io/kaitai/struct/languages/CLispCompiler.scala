@@ -3,79 +3,136 @@ package io.kaitai.struct.languages
 import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
 import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec}
-import io.kaitai.struct.languages.components.{LanguageCompiler, LanguageCompilerStatic, NoNeedForFullClassPath, UniversalDoc}
+import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, NoNeedForFullClassPath, ObjectOrientedLanguage, SingleOutputFile, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
 
 class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
+    // with EveryReadIsExpression
+    with AllocateIOLocalVar
     with NoNeedForFullClassPath
+    with ObjectOrientedLanguage
+    with SingleOutputFile
     with UniversalDoc {
 
   import CLispCompiler._
 
+  // Members declared in io.kaitai.struct.languages.components.AllocateIOLocalVar
+  override def allocateIO(varName: Identifier, rep: RepeatSpec): String = ""
+
   // Members declared in io.kaitai.struct.languages.components.ExceptionNames
-  def ksErrorName(err: KSError): String = ???
+  override def ksErrorName(err: KSError): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.ExtraAttrs
-  def extraAttrForIO(id: Identifier, rep: RepeatSpec): List[AttrSpec] = ???
+  // override def extraAttrForIO(id: Identifier, rep: RepeatSpec): List[AttrSpec] = ???
 
   // Members declared in io.kaitai.struct.languages.components.LanguageCompiler
-  def alignToByte(io: String): Unit = ???
-  def attrFixedContentsParse(attrName: Identifier, contents: Array[Byte]): Unit = ???
-  def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = ???
-  def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = ???
-  def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = ???
-  def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ???
-  def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ???
-  def classConstructorFooter: Unit = ???
-  def condIfFooter(expr: Ast.expr): Unit = ???
-  def condIfHeader(expr: Ast.expr): Unit = ???
-  def condRepeatEosFooter: Unit = ???
-  def condRepeatEosHeader(id: Identifier, io: String, dataType: DataType): Unit = ???
-  def condRepeatExprFooter: Unit = ???
-  def condRepeatExprHeader(id: Identifier, io: String, dataType: DataType, repeatExpr: Ast.expr): Unit = ???
-  def condRepeatInitAttr(id: Identifier, dataType: DataType): Unit = ???
-  def condRepeatUntilFooter(id: Identifier, io: String, dataType: DataType, untilExpr: Ast.expr): Unit = ???
-  def condRepeatUntilHeader(id: Identifier, io: String, dataType: DataType, untilExpr: Ast.expr): Unit = ???
-  def fileHeader(topClassName: String): Unit = ???
-  def indent: String = ???
-  def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr): Unit = ???
-  def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit = ???
-  def instanceFooter: Unit = ???
-  def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit = ???
-  def normalIO: String = ???
-  def popPos(io: String): Unit = ???
-  def pushPos(io: String): Unit = ???
-  def readFooter(): Unit = ???
-  def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit = ???
-  def results(topClass: ClassSpec): Map[String, String] = ???
-  def runRead(name: List[String]): Unit = ???
-  def runReadCalc(): Unit = ???
-  def seek(io: String, pos: Ast.expr): Unit = ???
-  val translator: AbstractTranslator = ???
-  def type2class(className: String): String = ???
-  def useIO(ioEx: Ast.expr): String = ???
+  override def alignToByte(io: String): Unit = ()
+  override def attrFixedContentsParse(attrName: Identifier, contents: Array[Byte]): Unit = ()
+  override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = ()
+  override def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = ()
+  override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = ()
+  override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
+  override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
+  override def classConstructorFooter: Unit = ()
+  override def condIfFooter(expr: Ast.expr): Unit = ()
+  override def condIfHeader(expr: Ast.expr): Unit = ()
+  override def condRepeatEosFooter: Unit = ()
+  override def condRepeatEosHeader(id: Identifier, io: String, dataType: DataType): Unit = ()
+  override def condRepeatExprFooter: Unit = ()
+  override def condRepeatExprHeader(id: Identifier, io: String, dataType: DataType, repeatExpr: Ast.expr): Unit = ()
+  override def condRepeatInitAttr(id: Identifier, dataType: DataType): Unit = ()
+  override def condRepeatUntilFooter(id: Identifier, io: String, dataType: DataType, untilExpr: Ast.expr): Unit = ()
+  override def condRepeatUntilHeader(id: Identifier, io: String, dataType: DataType, untilExpr: Ast.expr): Unit = ()
+
+  /**
+    * Generates file header for a top-level type.
+    *
+    * This defines the package for the binary structure class and sets
+    * up imports for the runtime.  The imports are added to the the
+    * output by the results method in SingleOutputFile.  This method
+    * calls outImports which is overridden by this compiler class.
+    *
+    * This method is part of the LanguageCompiler class.
+    *
+    * @param topClassName top-level name type in KS notation (lower underscore)
+    */
+  override def fileHeader(topClassName: String): Unit = {
+    outHeader.puts(s";; $headerComment")
+    outHeader.puts
+    outHeader.puts(s"(defpackage ${topClassName}")
+    importList.add(config.nimModule)
+    out.puts(")")
+  }
+
+  // override def outHeader
+
+  override def indent: String = ""
+  override def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr): Unit = ()
+  override def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit = ()
+  override def instanceFooter: Unit = ()
+  override def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit = ()
+  override def normalIO: String = ""
+  override def popPos(io: String): Unit = ()
+  override def pushPos(io: String): Unit = ()
+  override def readFooter(): Unit = ()
+  override def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit = ()
+  // def results(topClass: ClassSpec): Map[String, String] = ???
+  override def runRead(name: List[String]): Unit = ()
+  override def runReadCalc(): Unit = ()
+  override def seek(io: String, pos: Ast.expr): Unit = ()
+
+  override val translator: CLispTranslator = new CLispTranslator(typeProvider, importList)
+
+  override def type2class(className: String): String = ""
+  override def useIO(ioEx: Ast.expr): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
-  def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ???
-  def classFooter(name: String): Unit = ???
-  def classHeader(name: String): Unit = ???
-  def enumDeclaration(curClass: String, enumName: String, enumColl: Seq[(Long, String)]): Unit = ???
-  def instanceHeader(className: String, instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = ???
+  override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ()
+
+  override def classFooter(name: String): Unit = ()
+  override def classHeader(name: String): Unit = ()
+
+  override def enumDeclaration(curClass: String, enumName: String, enumColl: Seq[(Long, String)]): Unit = ()
+  override def instanceHeader(className: String, instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = ()
+
+  // Members declared in io.kaitai.struct.languages.components.ObjectOrientedLanguage
+
+  def idToStr(id: io.kaitai.struct.format.Identifier): String = ""
+  def localTemporaryName(id: io.kaitai.struct.format.Identifier): String = ""
+  def privateMemberName(id: io.kaitai.struct.format.Identifier): String = ""
+  def publicMemberName(id: io.kaitai.struct.format.Identifier): String = ""
+
+  // Members declared in io.kaitai.struct.languages.components.SingleOutputFile
+  override def outFileName(topClassName: String): String = s"$topClassName.lisp"
+
+  /**
+    * Generates imports clauses in target language format
+    *
+    * This generates the :use statements to import every package in
+    * the import list.  It's normally included in the file header.
+    *
+    * This method is part of the SingleOutputFile trait.  It is called
+    * by the results method in that trait.
+    *
+    * @return import
+    */
+  override def outImports(topClass: ClassSpec) =
+    "  (:use " + importList.toList.map((x) => s":$x").mkString(" ") + ")"
 
   // Members declared in io.kaitai.struct.languages.components.SwitchOps
-  def switchCaseEnd(): Unit = ???
-  def switchCaseStart(condition: Ast.expr): Unit = ???
-  def switchElseStart(): Unit = ???
-  def switchEnd(): Unit = ???
-  def switchStart(id: Identifier, on: Ast.expr): Unit = ???
+  override def switchCaseEnd(): Unit = ()
+  override def switchCaseStart(condition: Ast.expr): Unit = ()
+  override def switchElseStart(): Unit = ()
+  override def switchEnd(): Unit = ()
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = ()
 
   // Members declared in io.kaitai.struct.languages.components.ValidateOps
-  def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit = ???
+  override def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit = ()
 
   // Members declared in io.kaitai.struct.languages.components.UniversalDoc
-  def universalDoc(doc: DocSpec): Unit = ???
+  override def universalDoc(doc: DocSpec): Unit = ()
 }
 
 object CLispCompiler extends LanguageCompilerStatic
