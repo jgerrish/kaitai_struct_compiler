@@ -92,6 +92,15 @@ object Utils {
     }
   }
 
+  /**
+    * Converts string to `lowerHyphenCase`.
+    * @param s original string in `lower_under_score` case.
+    * @return same string in `lower-hyphen-case`.
+    */
+  def lowerHyphenCase(s: String): String = {
+    s.replace("_", "-")
+  }
+
   def capitalize(s: String): String = {
     if (s.isEmpty) {
       s

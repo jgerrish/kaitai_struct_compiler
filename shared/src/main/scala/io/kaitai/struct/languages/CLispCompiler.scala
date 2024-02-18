@@ -3,13 +3,14 @@ package io.kaitai.struct.languages
 import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
 import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec}
-import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, NoNeedForFullClassPath, ObjectOrientedLanguage, SingleOutputFile, UniversalDoc}
+import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, SingleOutputFile, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
 
 class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
     // with EveryReadIsExpression
+    with LowerHyphenCaseClasses
     with AllocateIOLocalVar
     with NoNeedForFullClassPath
     with ObjectOrientedLanguage
@@ -61,8 +62,12 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def fileHeader(topClassName: String): Unit = {
     outHeader.puts(s";; $headerComment")
     outHeader.puts
-    outHeader.puts(s"(defpackage ${topClassName}")
-    importList.add(config.nimModule)
+    // There are a lot of uses of type2class instead of a more generic
+    // solution that defines types of identifiers.
+    // A metadata or grammar file that describes a language could be
+    // used to reduce duplication.
+    outHeader.puts(s"(defpackage ${type2class(topClassName)}")
+    importList.add(config.clispPackage)
     out.puts(")")
   }
 
@@ -85,7 +90,13 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override val translator: CLispTranslator = new CLispTranslator(typeProvider, importList)
 
-  override def type2class(className: String): String = ""
+  // Defined in LowerHyphenCaseClasses
+  // This is a trait that can be used in any LanguageCompiler subclass
+  // and others to convert a type name to lisp-style-naming
+  // The default naming type is lower_under_score
+  //
+  // override def type2class(className: String): String = ""
+
   override def useIO(ioEx: Ast.expr): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
@@ -105,7 +116,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   def publicMemberName(id: io.kaitai.struct.format.Identifier): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.SingleOutputFile
-  override def outFileName(topClassName: String): String = s"$topClassName.lisp"
+  override def outFileName(topClassName: String): String = s"${type2class(topClassName)}.lisp"
 
   /**
     * Generates imports clauses in target language format
@@ -136,7 +147,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 }
 
 object CLispCompiler extends LanguageCompilerStatic
-{
+  with LowerHyphenCaseClasses {
   override def getCompiler(
     tp: ClassTypeProvider,
     config: RuntimeConfig
