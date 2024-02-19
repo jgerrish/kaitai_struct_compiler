@@ -2,7 +2,7 @@ package io.kaitai.struct.languages
 
 import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
 import io.kaitai.struct.exprlang.Ast
-import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec}
+import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec, TextRef, UrlRef}
 import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, SingleOutputFile, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
@@ -102,8 +102,14 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
   override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ()
 
-  override def classFooter(name: String): Unit = ()
-  override def classHeader(name: String): Unit = ()
+  override def classFooter(name: String): Unit = (
+    // out.dec
+    out.puts(")")
+  )
+  override def classHeader(name: String): Unit = (
+    // out.inc
+    out.puts(s"(defclass ${type2class(name)} (kaitai-struct)")
+  )
 
   override def enumDeclaration(curClass: String, enumName: String, enumColl: Seq[(Long, String)]): Unit = ()
   override def instanceHeader(className: String, instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = ()
@@ -143,7 +149,27 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit = ()
 
   // Members declared in io.kaitai.struct.languages.components.UniversalDoc
-  override def universalDoc(doc: DocSpec): Unit = ()
+  /**
+    * Output a documentation string for a language component.
+    *
+    * @param doc A DocSpec which contains the documentation that
+    * should be converted to a docstring or comment.
+    *
+    * For LISP-style languages, we output two semi-colons with only
+    * one empty line of padding before the comment.
+    */
+  override def universalDoc(doc: DocSpec): Unit = {
+    out.puts
+
+    doc.summary.foreach(summary => out.putsLines(";; ", summary))
+
+    doc.ref.foreach {
+      case TextRef(text) =>
+        out.putsLines(";; ", "@see \"" + text + "\"")
+      case ref: UrlRef =>
+        out.putsLines(";; ", s"@see ${ref.toAhref}")
+    }
+  }
 }
 
 object CLispCompiler extends LanguageCompilerStatic
