@@ -29,9 +29,8 @@ abstract class LanguageOutputWriter(indentStr: String) {
 }
 
 class StringLanguageOutputWriter(indentStr: String) extends LanguageOutputWriter(indentStr) {
-  private val sb = new StringBuilder
-
   def result = sb.toString
+  protected val sb = new StringBuilder
 
   override def add(other: StringLanguageOutputWriter) = sb.append(other.result)
   override def puts(s: String): Unit = {

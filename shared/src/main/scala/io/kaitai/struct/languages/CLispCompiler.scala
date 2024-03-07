@@ -3,7 +3,7 @@ package io.kaitai.struct.languages
 import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
 import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec, TextRef, UrlRef}
-import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, SingleOutputFile, UniversalDoc}
+import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, LispSingleOutputFile, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
 
@@ -14,7 +14,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     with AllocateIOLocalVar
     with NoNeedForFullClassPath
     with ObjectOrientedLanguage
-    with SingleOutputFile
+    with LispSingleOutputFile
     with UniversalDoc {
 
   import CLispCompiler._
@@ -61,6 +61,11 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     */
   override def fileHeader(topClassName: String): Unit = {
     outHeader.puts(s";; $headerComment")
+    // There are a lot of style choices here that would be really nice
+    // to parameterize.  For example, we want a blank line after the
+    // header comments, but not after the class comments.
+    // A language for doing this would be nifty.
+    outHeader.puts
     outHeader.puts
     // There are a lot of uses of type2class instead of a more generic
     // solution that defines types of identifiers.
@@ -68,7 +73,10 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     // used to reduce duplication.
     outHeader.puts(s"(defpackage ${type2class(topClassName)}")
     importList.add(config.clispPackage)
+    // We write to out here, since the default results method in
+    // SingleOutputFile concatenates outHeader, outImports and out
     out.puts(")")
+    out.puts
   }
 
   // override def outHeader
@@ -102,10 +110,12 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
   override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ()
 
-  override def classFooter(name: String): Unit = (
+  override def classFooter(name: String): Unit = {
     // out.dec
     out.puts(")")
-  )
+    out.puts
+  }
+
   override def classHeader(name: String): Unit = (
     // out.inc
     out.puts(s"(defclass ${type2class(name)} (kaitai-struct)")
@@ -161,13 +171,18 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def universalDoc(doc: DocSpec): Unit = {
     out.puts
 
-    doc.summary.foreach(summary => out.putsLines(";; ", summary))
+    doc.summary.foreach(summary => {
+      out.putsLines(";; ", summary)
+      out.puts
+    })
 
     doc.ref.foreach {
       case TextRef(text) =>
         out.putsLines(";; ", "@see \"" + text + "\"")
-      case ref: UrlRef =>
+      case ref: UrlRef => {
         out.putsLines(";; ", s"@see ${ref.toAhref}")
+      }
+      out.puts
     }
   }
 }
