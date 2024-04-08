@@ -50,8 +50,8 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts("1;")
   }
 
-  override def opaqueClassDeclaration(classSpec: ClassSpec): Unit =
-    out.puts(s"use ${type2class(classSpec.name.head)};")
+  override def externalClassDeclaration(classSpec: ClassSpec): Unit =
+    importList.add(type2class(classSpec.name.head))
 
   override def classHeader(name: List[String]): Unit = {
     out.puts
@@ -92,7 +92,7 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts
   }
 
-  override def classConstructorFooter(): Unit = {
+  override def classConstructorFooter: Unit = {
     out.puts
     out.puts("return $self;")
     universalFooter
@@ -296,7 +296,7 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case BitsType(width: Int, bitEndian) =>
         s"$io->read_bits_int_${bitEndian.toSuffix}($width)"
       case t: UserType =>
-        val addArgs = if (t.isOpaque) {
+        val addArgs = if (t.isExternal(typeProvider.nowClass)) {
           ""
         } else {
           val parent = t.forcedParent match {

@@ -42,7 +42,7 @@ class NimTranslator(provider: TypeProvider, importList: ImportList) extends Base
   override def arraySubscript(container: expr, idx: expr): String =
     s"${translate(container)}[${translate(idx)}]"
 
-  override def strConcat(left: Ast.expr, right: Ast.expr): String = "($" + s"${translate(left)} & " + "$" + s"${translate(right)})"
+  override def strConcat(left: expr, right: expr, extPrec: Int) = "($" + s"${translate(left)} & " + "$" + s"${translate(right)})"
 
   // Members declared in io.kaitai.struct.translators.CommonMethods
 
@@ -114,7 +114,7 @@ class NimTranslator(provider: TypeProvider, importList: ImportList) extends Base
   override def arraySize(a: expr): String = s"len(${translate(a)})"
   override def enumToInt(v: expr, et: EnumType): String = s"ord(${translate(v)})"
   override def floatToInt(v: expr): String = s"int(${translate(v)})"
-  override def intToStr(v: expr, base: expr): String = {
+  override def intToStr(v: expr): String = {
     importList.add("strutils")
     s"intToStr(int(${translate(v)}))"
   }
@@ -127,4 +127,11 @@ class NimTranslator(provider: TypeProvider, importList: ImportList) extends Base
     s"${translate(s)}.substr(${translate(from)}, ${translate(to)} - 1)"
   override def strToInt(s: expr, base: expr): String =
     s"${translate(s)}.parseInt(${translate(base)})"
+
+  override def doInterpolatedStringLiteral(exprs: Seq[Ast.expr]): String =
+    if (exprs.isEmpty) {
+      doStringLiteral("")
+    } else {
+      exprs.map(anyToStr).mkString(" & ")
+    }
 }

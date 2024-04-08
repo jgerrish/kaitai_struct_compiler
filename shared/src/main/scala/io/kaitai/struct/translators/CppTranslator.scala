@@ -2,7 +2,7 @@ package io.kaitai.struct.translators
 
 import java.nio.charset.Charset
 
-import io.kaitai.struct.CppRuntimeConfig.{RawPointers, SharedPointers, UniqueAndRawPointers}
+import io.kaitai.struct.CppRuntimeConfig.{RawPointers, UniqueAndRawPointers}
 import io.kaitai.struct.datatype.DataType
 import io.kaitai.struct.datatype.DataType._
 import io.kaitai.struct.exprlang.Ast
@@ -118,12 +118,12 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
   override def doByteArrayLiteral(arr: Seq[Byte]): String =
     "std::string(\"" + Utils.hexEscapeByteArray(arr) + "\", " + arr.length + ")"
 
-  override def numericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Mod) =>
         s"${CppCompiler.kstreamName}::mod(${translate(left)}, ${translate(right)})"
       case _ =>
-        super.numericBinOp(left, op, right)
+        super.genericBinOp(left, op, right, extPrec)
     }
   }
 
@@ -161,18 +161,6 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
   override def doIfExp(condition: expr, ifTrue: expr, ifFalse: expr): String =
     s"((${translate(condition)}) ? (${translate(ifTrue)}) : (${translate(ifFalse)}))"
   override def doCast(value: Ast.expr, typeName: DataType): String =
-    config.cppConfig.pointers match {
-      case RawPointers | UniqueAndRawPointers =>
-        cppStaticCast(value, typeName)
-      case SharedPointers =>
-        typeName match {
-          case ut: UserType =>
-            s"std::static_pointer_cast<${CppCompiler.types2class(ut.classSpec.get.name)}>(${translate(value)})"
-          case _ => cppStaticCast(value, typeName)
-        }
-    }
-
-  def cppStaticCast(value: Ast.expr, typeName: DataType): String =
     s"static_cast<${CppCompiler.kaitaiType2NativeType(config.cppConfig, typeName)}>(${translate(value)})"
 
   // Predefined methods of various types
@@ -190,20 +178,14 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
     s"((${translate(v)}) ? 1 : 0)"
   override def floatToInt(v: expr): String =
     s"static_cast<int>(${translate(v)})"
-  override def intToStr(i: expr, base: expr): String = {
-    val baseStr = translate(base)
-    baseStr match {
-      case "10" =>
-        // FIXME: proper way for C++11, but not available in earlier versions
-        //s"std::to_string(${translate(i)})"
-        s"${CppCompiler.kstreamName}::to_string(${translate(i)})"
-      case _ => throw new UnsupportedOperationException(baseStr)
-    }
-  }
+  override def intToStr(i: expr): String =
+    // FIXME: proper way for C++11, but not available in earlier versions
+    //s"std::to_string(${translate(i)})"
+    s"${CppCompiler.kstreamName}::to_string(${translate(i)})"
   override def bytesToStr(bytesExpr: String, encoding: String): String =
     s"""${CppCompiler.kstreamName}::bytes_to_str($bytesExpr, "$encoding")"""
   override def bytesLength(b: Ast.expr): String =
-    s"${translate(b)}.length()"
+    s"${translate(b, METHOD_PRECEDENCE)}.length()"
 
   override def bytesSubscript(container: Ast.expr, idx: Ast.expr): String =
     s"${translate(container)}[${translate(idx)}]"
@@ -214,9 +196,10 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
     }
   }
   override def bytesLast(b: Ast.expr): String = {
+    val bStr = translate(b, METHOD_PRECEDENCE)
     config.cppConfig.stdStringFrontBack match {
-      case true => s"${translate(b)}.back()"
-      case false => s"${translate(b)}[${translate(b)}.length() - 1]"
+      case true => s"$bStr.back()"
+      case false => s"$bStr[$bStr.length() - 1]"
     }
   }
   override def bytesMin(b: Ast.expr): String =
@@ -225,26 +208,26 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
     s"${CppCompiler.kstreamName}::byte_array_max(${translate(b)})"
 
   override def strLength(s: expr): String =
-    s"${translate(s)}.length()"
+    s"${translate(s, METHOD_PRECEDENCE)}.length()"
   override def strReverse(s: expr): String =
     s"${CppCompiler.kstreamName}::reverse(${translate(s)})"
   override def strSubstring(s: expr, from: expr, to: expr): String =
-    s"${translate(s)}.substr(${translate(from)}, (${translate(to)}) - (${translate(from)}))"
+    s"${translate(s, METHOD_PRECEDENCE)}.substr(${translate(from)}, ${genericBinOp(to, Ast.operator.Sub, from, 0)})"
 
   override def arrayFirst(a: expr): String =
-    s"${translate(a)}->front()"
+    s"${translate(a, METHOD_PRECEDENCE)}->front()"
   override def arrayLast(a: expr): String =
-    s"${translate(a)}->back()"
+    s"${translate(a, METHOD_PRECEDENCE)}->back()"
   override def arraySize(a: expr): String =
-    s"${translate(a)}->size()"
+    s"${translate(a, METHOD_PRECEDENCE)}->size()"
   override def arrayMin(a: expr): String = {
     importListSrc.addSystem("algorithm")
-    val v = translate(a)
+    val v = translate(a, METHOD_PRECEDENCE)
     s"*std::min_element($v->begin(), $v->end())"
   }
   override def arrayMax(a: expr): String = {
     importListSrc.addSystem("algorithm")
-    val v = translate(a)
+    val v = translate(a, METHOD_PRECEDENCE)
     s"*std::max_element($v->begin(), $v->end())"
   }
 }

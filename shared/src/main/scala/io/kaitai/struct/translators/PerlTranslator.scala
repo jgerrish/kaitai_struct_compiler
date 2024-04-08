@@ -34,12 +34,12 @@ class PerlTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   override def strLiteralUnicode(code: Char): String =
     "\\N{U+%04x}".format(code.toInt)
 
-  override def numericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Div) =>
-        s"int(${translate(left)} / ${translate(right)})"
+        s"int(${super.genericBinOp(left, op, right, 0)})"
       case _ =>
-        super.numericBinOp(left, op, right)
+        super.genericBinOp(left, op, right, extPrec)
     }
   }
 
@@ -112,8 +112,8 @@ class PerlTranslator(provider: TypeProvider, importList: ImportList) extends Bas
     s"(${translate(condition)} ? ${translate(ifTrue)} : ${translate(ifFalse)})"
 
   // Predefined methods of various types
-  override def strConcat(left: Ast.expr, right: Ast.expr): String =
-    s"${translate(left)} . ${translate(right)}"
+  override def strConcat(left: Ast.expr, right: Ast.expr, extPrec: Int) =
+    genericBinOpStr(left, Ast.operator.Add, ".", right, extPrec)
   override def strToInt(s: Ast.expr, base: Ast.expr): String = {
     val baseStr = translate(base)
     baseStr match {
@@ -134,22 +134,8 @@ class PerlTranslator(provider: TypeProvider, importList: ImportList) extends Bas
     translate(v)
   override def floatToInt(v: Ast.expr): String =
     s"int(${translate(v)})"
-  override def intToStr(i: Ast.expr, base: Ast.expr): String = {
-    val baseStr = translate(base)
-    val format = baseStr match {
-      case "2" =>
-        s"%b"
-      case "8" =>
-        s"%o"
-      case "10" =>
-        s"%d"
-      case "16" =>
-        s"0x%X"
-      case _ => throw new UnsupportedOperationException(baseStr)
-    }
-
-    s"sprintf('$format', ${translate(i)})"
-  }
+  override def intToStr(i: Ast.expr): String =
+    s"sprintf('%d', ${translate(i)})"
   override def bytesToStr(bytesExpr: String, encoding: String): String = {
     importList.add("Encode")
     s"""Encode::decode("$encoding", $bytesExpr)"""
@@ -176,7 +162,7 @@ class PerlTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   override def strReverse(value: Ast.expr): String =
     s"scalar(reverse(${translate(value)}))"
   override def strSubstring(s: Ast.expr, from: Ast.expr, to: Ast.expr): String =
-    s"substr(${translate(s)}, ${translate(from)}, (${translate(to)}) - (${translate(from)}))"
+    s"substr(${translate(s)}, ${translate(from)}, ${genericBinOp(to, Ast.operator.Sub, from, 0)})"
 
   override def arrayFirst(a: Ast.expr): String =
     s"@{${translate(a)}}[0]"
@@ -202,5 +188,12 @@ class PerlTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   }
 
   override def kaitaiStreamSize(value: Ast.expr): String =
-    s"${translate(value)}->size()"
+    s"${translate(value, METHOD_PRECEDENCE)}->size()"
+
+  override def doInterpolatedStringLiteral(exprs: Seq[Ast.expr]): String =
+    if (exprs.isEmpty) {
+      doStringLiteral("")
+    } else {
+      exprs.map(anyToStr).mkString(" . ")
+    }
 }

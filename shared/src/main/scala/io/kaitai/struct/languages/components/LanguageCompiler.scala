@@ -73,15 +73,14 @@ abstract class LanguageCompiler(
     * @param topClassName top-level name type in KS notation (lower underscore)
     */
   def fileFooter(topClassName: String): Unit = {}
-  def importFile(file: String): Unit = {}
 
   /**
-    * Outputs declaration of "opaque class", i.e. class that will be referred to in this file, but
+    * Outputs declaration of "external class", i.e. class that will be referred to in this file, but
     * not declared here. Some languages require either a "forward declaration" in this case, or a
-    * statement to import that class, or something similar. Called once per each opaque class.
+    * statement to import that class, or something similar. Called once per each external class.
     * @param classSpec
     */
-  def opaqueClassDeclaration(classSpec: ClassSpec): Unit = {}
+  def externalClassDeclaration(classSpec: ClassSpec): Unit = {}
 
   def classDoc(name: List[String], doc: DocSpec): Unit = {}
   def classHeader(name: List[String]): Unit
@@ -159,7 +158,7 @@ abstract class LanguageCompiler(
   def instanceFooter: Unit
   def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit
   def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit
-  def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr)
+  def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr): Unit
 
   def enumDeclaration(curClass: List[String], enumName: String, enumColl: Seq[(Long, EnumValueSpec)]): Unit
 

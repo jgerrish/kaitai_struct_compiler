@@ -7,12 +7,12 @@ import io.kaitai.struct.format.Identifier
 import io.kaitai.struct.languages.{PythonCompiler, RubyCompiler}
 
 class PythonTranslator(provider: TypeProvider, importList: ImportList) extends BaseTranslator(provider) {
-  override def numericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Div) =>
-        s"${translate(left)} // ${translate(right)}"
+        genericBinOpStr(left, op, "//", right, extPrec)
       case _ =>
-        super.numericBinOp(left, op, right)
+        super.genericBinOp(left, op, right, extPrec)
     }
   }
 
@@ -40,7 +40,8 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
     "b\"" + Utils.hexEscapeByteArray(arr) + "\""
   override def doByteArrayNonLiteral(elts: Seq[Ast.expr]): String = {
     importList.add("import struct")
-    s"struct.pack('${elts.length}b', ${elts.map(translate).mkString(", ")})"
+    // Use `unsigned char` representation (see https://docs.python.org/3/library/struct.html#struct-format-strings)
+    s"struct.pack('${elts.length}B', ${elts.map(translate).mkString(", ")})"
   }
 
   override def doLocalName(s: String) = {
@@ -90,18 +91,8 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
     s"int(${translate(v)})"
   override def floatToInt(v: Ast.expr): String =
     s"int(${translate(v)})"
-  override def intToStr(i: Ast.expr, base: Ast.expr): String = {
-    val baseStr = translate(base)
-    val func = baseStr match {
-      case "2" => "bin"
-      case "8" => "oct"
-      case "10" => "str"
-      case "16" => "hex"
-      case _ => throw new UnsupportedOperationException(baseStr)
-    }
-
-    s"$func(${translate(i)})"
-  }
+  override def intToStr(i: Ast.expr): String =
+    s"str(${translate(i)})"
   override def bytesToStr(bytesExpr: String, encoding: String): String =
     s"""($bytesExpr).decode("$encoding")"""
 
@@ -124,7 +115,7 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
   override def strReverse(value: Ast.expr): String =
     s"(${translate(value)})[::-1]"
   override def strSubstring(s: Ast.expr, from: Ast.expr, to: Ast.expr): String =
-    s"(${translate(s)})[${translate(from)}:${translate(to)}]"
+    s"${translate(s, METHOD_PRECEDENCE)}[${translate(from)}:${translate(to)}]"
 
   override def arrayFirst(a: Ast.expr): String =
     s"${translate(a)}[0]"
@@ -138,9 +129,9 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
     s"max(${translate(a)})"
 
   override def kaitaiStreamSize(value: Ast.expr): String =
-    s"${translate(value)}.size()"
+    s"${translate(value, METHOD_PRECEDENCE)}.size()"
   override def kaitaiStreamEof(value: Ast.expr): String =
-    s"${translate(value)}.is_eof()"
+    s"${translate(value, METHOD_PRECEDENCE)}.is_eof()"
   override def kaitaiStreamPos(value: Ast.expr): String =
-    s"${translate(value)}.pos()"
+    s"${translate(value, METHOD_PRECEDENCE)}.pos()"
 }
