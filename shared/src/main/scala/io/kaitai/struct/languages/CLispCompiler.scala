@@ -2,7 +2,7 @@ package io.kaitai.struct.languages
 
 import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
 import io.kaitai.struct.exprlang.Ast
-import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, ParamDefSpec, ProcessExpr, RepeatSpec, TextRef, UrlRef}
+import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, IoIdentifier, NamedIdentifier, NumberedIdentifier, ParamDefSpec, ParentIdentifier, ProcessExpr, RawIdentifier, RepeatSpec, RootIdentifier, SpecialIdentifier, TextRef, UrlRef}
 import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, LispSingleOutputFile, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
@@ -34,7 +34,56 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = ()
   override def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = ()
   override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = ()
-  override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
+
+  def attributeDeclarationHeader(): Unit = out.putOpenParen()
+  def attributeDeclarationFooter(): Unit = out.putCloseParen()
+
+  /**
+    * Generates an attribute declaration prefix for a single attribute.
+    * @param attrName the name of the attribute
+    * @param first this is the first attribute in the attribute list
+    */
+  // This should probably be made generic in the LanguageOutputWriter
+  // subclass
+  def attributeDeclarationPrefix(attrName: Identifier, first: Boolean): Unit = {
+    attrName match {
+      case IoIdentifier | ParentIdentifier | RootIdentifier | IoIdentifier =>
+        // just ignore it for now, like in RustCompiler
+        return
+      case _ => {
+        if (!first) {
+          out.puts
+          out.puts(" ")
+        }
+      }
+    }
+  }
+
+  /**
+    * Generates an attribute declaration for a single attribute.
+    * @param attrName the name of the attribute
+    * @param attrType the type of the attribute
+    * @param isNilable the attribute can be nil
+    */
+  override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {
+    attrName match {
+      case ParentIdentifier | RootIdentifier | IoIdentifier =>
+        // just ignore it for now, like in RustCompiler
+        return
+      case _ => {
+        // TODO: If someone wants to add strong type checking to the
+        // Common LISP compiler, this is one way of doing it.  You'll
+        // need to add a type conversion function, like
+        // kaitaiType2NativeType in the RustCompiler.
+        // Feel free to contribute
+        // out.puts(s"(${idToStr(attrName)} :type (${kaitaiTypeToNativeType({attrType)} * *) :initarg :${idToStr(attrName)} :initform 0)")
+
+        // For now, we won't use types
+        out.puts(s"(${idToStr(attrName)} :initarg :${idToStr(attrName)} :initform 0)")
+      }
+    }
+  }
+
   override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
   override def classConstructorFooter: Unit = ()
   override def condIfFooter(expr: Ast.expr): Unit = ()
@@ -75,13 +124,16 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     importList.add(config.clispPackage)
     // We write to out here, since the default results method in
     // SingleOutputFile concatenates outHeader, outImports and out
-    out.puts(")")
+    out.putCloseParen()
     out.puts
   }
 
   // override def outHeader
 
-  override def indent: String = ""
+  // Default indent string for each level of indent is two spaces
+  override def indent: String = "  "
+
+
   override def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr): Unit = ()
   override def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit = ()
   override def instanceFooter: Unit = ()
@@ -110,23 +162,56 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
   override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ()
 
+  /**
+    * Renders the class footer
+    *
+    * @param name the name of the class
+    */
   override def classFooter(name: String): Unit = {
-    // out.dec
-    out.puts(")")
+    out.dec
+    out.putCloseParen()
     out.puts
   }
 
-  override def classHeader(name: String): Unit = (
-    // out.inc
+  /**
+    * Renders the class header
+    *
+    * @param name the name of the class
+    */
+  override def classHeader(name: String): Unit = {
     out.puts(s"(defclass ${type2class(name)} (kaitai-struct)")
-  )
+    out.inc
+    out.puts
+  }
 
   override def enumDeclaration(curClass: String, enumName: String, enumColl: Seq[(Long, String)]): Unit = ()
   override def instanceHeader(className: String, instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = ()
 
   // Members declared in io.kaitai.struct.languages.components.ObjectOrientedLanguage
 
-  def idToStr(id: io.kaitai.struct.format.Identifier): String = ""
+  /**
+    * Renders identifier to a string, specifically for a given
+    * language and settings. This usually includes things like
+    * case and separator conversion and does *not* include things
+    * like prepending "@" or "this." or "self." that might be
+    * used to access private member.
+    *
+    * @param id identifier to render
+    * @return identifier as string
+    *
+    * This implementation is based on the one in RustCompiler
+    * It may get changed as more language features get added.
+    */
+  def idToStr(id: io.kaitai.struct.format.Identifier): String = {
+    id match {
+      case SpecialIdentifier(name) => name
+      case NamedIdentifier(name) => Utils.lowerHyphenCase(name)
+      case NumberedIdentifier(idx) => s"_${NumberedIdentifier.TEMPLATE}$idx"
+      case InstanceIdentifier(name) => Utils.lowerHyphenCase(name)
+      case RawIdentifier(innerId) => "_raw_" + idToStr(innerId)
+    }
+  }
+
   def localTemporaryName(id: io.kaitai.struct.format.Identifier): String = ""
   def privateMemberName(id: io.kaitai.struct.format.Identifier): String = ""
   def publicMemberName(id: io.kaitai.struct.format.Identifier): String = ""
