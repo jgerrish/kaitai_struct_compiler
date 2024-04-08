@@ -21,7 +21,7 @@ class CLispTranslator(provider: TypeProvider, importList: ImportList) extends Ba
   override def arraySubscript(container: Ast.expr, idx: Ast.expr): String = ""
   override def enumToInt(value: Ast.expr, et: EnumType): String = ""
   override def floatToInt(value: Ast.expr): String = ""
-  override def intToStr(value: Ast.expr, num: Ast.expr): String = ""
+  override def intToStr(value: Ast.expr): String = ""
   override def strLength(s: Ast.expr): String = ""
   override def strReverse(s: Ast.expr): String = ""
   override def strSubstring(s: Ast.expr, from: Ast.expr, to: Ast.expr): String = ""
