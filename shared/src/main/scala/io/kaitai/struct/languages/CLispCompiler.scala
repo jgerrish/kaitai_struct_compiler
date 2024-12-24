@@ -1,16 +1,23 @@
 package io.kaitai.struct.languages
 
-import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, KSError}
+import scala.collection.mutable.ListBuffer
+import io.kaitai.struct.datatype.{DataType, Endianness, FixedEndian, InheritedEndian, KSError}
+import io.kaitai.struct.datatype.DataType.{BytesEosType, BytesLimitType, BytesTerminatedType, BytesType, IntType, ReadableType, UserType, USER_TYPE_NO_PARENT}
 import io.kaitai.struct.exprlang.Ast
-import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, IoIdentifier, NamedIdentifier, NumberedIdentifier, ParamDefSpec, ParentIdentifier, ProcessExpr, RawIdentifier, RepeatSpec, RootIdentifier, SpecialIdentifier, TextRef, UrlRef}
-import io.kaitai.struct.languages.components.{AllocateIOLocalVar, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, LispSingleOutputFile, UniversalDoc}
+import io.kaitai.struct.format.{AttrLikeSpec, AttrSpec, ClassSpec, DocSpec, Identifier, InstanceIdentifier, IoIdentifier, NamedIdentifier, NoRepeat, NumberedIdentifier, ParamDefSpec, ParentIdentifier, ProcessCustom, ProcessExpr, ProcessRotate, ProcessXor, ProcessZlib, RawIdentifier, RepeatExpr, RepeatSpec, RootIdentifier, SpecialIdentifier, TextRef, UrlRef}
+import io.kaitai.struct.languages.components.{AllocateIOLocalVar, EveryReadIsExpression, LanguageCompiler, LanguageCompilerStatic, LowerHyphenCaseClasses, NoNeedForFullClassPath, ObjectOrientedLanguage, LispSingleOutputFile, StreamStructNames, UniversalDoc}
 import io.kaitai.struct.translators.{AbstractTranslator, CLispTranslator}
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
 
 class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
-    // with EveryReadIsExpression
+    // EveryReadIsExpression ensures reads are expressions, not just
+    // statements
+    with EveryReadIsExpression
     with LowerHyphenCaseClasses
+    // With Common LISP we don't need to allocate the IO variable
+    // But include this here until the rest is cleaned up
+    // TODO: Fix this too
     with AllocateIOLocalVar
     with NoNeedForFullClassPath
     with ObjectOrientedLanguage
@@ -19,20 +26,137 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   import CLispCompiler._
 
+
+  override val translator: CLispTranslator = new CLispTranslator(typeProvider, importList)
+
+  // Members declared in
+  // io.kaitai.struct.languages.components.EveryReadIsExpression
+  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Int], include: Boolean): String = ""
+  override def handleAssignmentRepeatEos(id: Identifier, expr: String): Unit = ()
+  override def handleAssignmentRepeatExpr(id: Identifier, expr: String): Unit = ()
+  override def handleAssignmentRepeatUntil(id: Identifier, expr: String, isRaw: Boolean): Unit = ()
+
+
+  /**
+    * Handle a simple assignment expression
+    * This sets the slot with the value of the expression.
+    *
+    * The slot-value function call could be abstracted out somewhere
+    * either into privateMemberName or a method above that.
+    *
+    * @param id identifier of a member variable to set
+    * @param expr the value to set the stream to
+    * @return the result of the assignment
+    */
+  override def handleAssignmentSimple(id: Identifier, expr: String): Unit = {
+    val name = privateMemberName(id)
+
+    if (config.useAccessors) {
+      out.puts(s"(setf ($name ks) $expr)")
+    } else {
+      out.puts(s"(setf (slot-value ks '$name) $expr)")
+    }
+  }
+
+  // TODO: Implement this
+  override def parseExpr(dataType: DataType, assignType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
+    val expr = dataType match {
+      case t: ReadableType =>
+        s"(${kstreamName}:read-${Utils.lowerHyphenCase(t.apiCall(defEndian))} $io)"
+      case blt: BytesLimitType =>
+        s"(${kstreamName}:read-bytes $io (int (${expression(blt.size)})))"
+      case _: BytesEosType =>
+        s"(${kstreamName}:read-bytes-full $io)"
+      case BytesTerminatedType(terminator, include, consume, eosError, _) =>
+        s"(${kstreamName}:read-bytes-term $io $terminator $include $consume $eosError)"
+      case t: UserType =>
+        val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
+        val addArgs = if (t.isExternal(typeProvider.nowClass)) {
+          ""
+        } else {
+          // TODO: This will need to be revisited when we
+          // start testing nested structures
+          val parent = t.forcedParent match {
+            case Some(USER_TYPE_NO_PARENT) => "nil"
+            case Some(fp) => translator.translate(fp)
+            case None => "self"
+          }
+          // TODO: This will need to be revisited when we
+          // start testing nested structures
+          val addEndian = t.classSpec.get.meta.endian match {
+            case Some(InheritedEndian) => ", self._is_le"
+            case _ => ""
+          }
+          s", $parent, self._root$addEndian"
+        }
+        s"${userType2class(t)}($addParams$io$addArgs)"
+
+      // default match to satisfy sbt compiler warnings
+      // Feel free to contribute with the proper fix here
+      // Throw a Scala exception?  Generate a Common LISP exception?
+      // The code is running, it's generating classes.  It's a start.
+      case _ => ""
+    }
+
+    if (assignType != dataType) {
+      s"$expr"
+      // s"${ksToNim(assignType)}($expr)"
+    } else {
+      s"$expr"
+    }
+  }
+
+  // TODO: Remove or document
+  def userType2class(t: UserType): String = {
+    val name = t.classSpec.get.name
+    val prefix = if (t.isExternal(typeProvider.nowClass)) {
+      s"${name.head}."
+    } else {
+      ""
+    }
+    s"$prefix${types2class(name)}"
+  }
+  // TODO: Remove or document
+  def types2class(name: List[String]): String = name.map(x => type2class(x)).mkString(".")
+
+
   // Members declared in io.kaitai.struct.languages.components.AllocateIOLocalVar
+
+  /*
+   * TODO Get io naming right
+   * TODO: Add translator code
+   * TODO: Differentiate betwen doName and doLocalName
+   * TODO: Add why one was chosen over the other
+   */
   override def allocateIO(varName: Identifier, rep: RepeatSpec): String = ""
+
+  def getRawIdExpr(varName: Identifier, rep: RepeatSpec): String = {
+    val memberName = privateMemberName(varName)
+    rep match {
+      case NoRepeat => memberName
+      case RepeatExpr(_) => s"$memberName[i]"
+      case _ => s"$memberName[-1]"
+    }
+  }
 
   // Members declared in io.kaitai.struct.languages.components.ExceptionNames
   override def ksErrorName(err: KSError): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.ExtraAttrs
-  // override def extraAttrForIO(id: Identifier, rep: RepeatSpec): List[AttrSpec] = ???
+  // override def extraAttrForIO(id: Identifier, rep: RepeatSpec): List[AttrSpec] = {
+  //   ListBuffer[AttrSpec]().toList()
+  // }
 
   // Members declared in io.kaitai.struct.languages.components.LanguageCompiler
   override def alignToByte(io: String): Unit = ()
   override def attrFixedContentsParse(attrName: Identifier, contents: Array[Byte]): Unit = ()
-  override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = ()
+
+  // override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = {
+  //   out.puts("TEST 1")
+  // }
+
   override def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = ()
+
   override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = ()
 
   def attributeDeclarationHeader(): Unit = out.putOpenParen()
@@ -66,6 +190,8 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     * @param isNilable the attribute can be nil
     */
   override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {
+    val name = idToStr(attrName)
+
     attrName match {
       case ParentIdentifier | RootIdentifier | IoIdentifier =>
         // just ignore it for now, like in RustCompiler
@@ -79,13 +205,18 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         // out.puts(s"(${idToStr(attrName)} :type (${kaitaiTypeToNativeType({attrType)} * *) :initarg :${idToStr(attrName)} :initform 0)")
 
         // For now, we won't use types
-        out.puts(s"(${idToStr(attrName)} :initarg :${idToStr(attrName)} :initform 0)")
+        if (config.useAccessors) {
+          // The version with accessors
+          out.puts(s"($name :initarg :$name :initform nil :accessor $name)")
+        } else {
+          // The version without accessors
+          out.puts(s"($name :initarg :$name :initform nil)")
+        }
       }
     }
   }
 
   override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
-  override def classConstructorFooter: Unit = ()
   override def condIfFooter(expr: Ast.expr): Unit = ()
   override def condIfHeader(expr: Ast.expr): Unit = ()
   override def condRepeatEosFooter: Unit = ()
@@ -121,7 +252,14 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     // A metadata or grammar file that describes a language could be
     // used to reduce duplication.
     outHeader.puts(s"(defpackage ${type2class(topClassName)}")
+    outHeader.puts
     importList.add(config.clispPackage)
+
+    // Maybe these should not be explicitly prefixed as namespaces
+    // before every function.
+    // in-package is what changes that requirement
+    importList.add(s"${kstreamName}")
+    importList.add(s"${kstructName}")
     // We write to out here, since the default results method in
     // SingleOutputFile concatenates outHeader, outImports and out
     out.putCloseParen()
@@ -138,17 +276,49 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit = ()
   override def instanceFooter: Unit = ()
   override def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit = ()
-  override def normalIO: String = ""
+  override def normalIO: String = s"(slot-value ks '${kstructName}::ks)"
   override def popPos(io: String): Unit = ()
   override def pushPos(io: String): Unit = ()
-  override def readFooter(): Unit = ()
-  override def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit = ()
+
+  override def readFooter(): Unit = {
+    out.dec
+    out.puts(")")
+    out.dec
+    out.puts(")")
+    out.puts
+  }
+
+  override def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit = {
+    // This pattern is based the readHeader code in PythonCompiler
+    val suffix = endian match {
+      case None => ""
+      case Some(e) => s"_${e.toSuffix}"
+    }
+    out.puts
+    // We may not need stream, parent and root.  The commit that adds
+    // this gets the compiler-runtime interaction working.  If later
+    // experiments with embedded structures show it's not necessary,
+    // we can remove it.
+    // out.puts(s"(defmethod kaitai-read$suffix ((ks ${kstructName}:${kstructName}) stream parent root)")
+    out.puts(s"(defmethod kaitai-read$suffix ((ks ${types2class(typeProvider.nowClass.name)}) stream parent root)")
+    out.inc
+    out.puts("(progn")
+    out.inc
+  }
+
   // def results(topClass: ClassSpec): Map[String, String] = ???
-  override def runRead(name: List[String]): Unit = ()
+
+  override def runRead(name: List[String]): Unit = {
+    name.foreach{ (ksName) =>
+      out.inc
+      out.puts
+      out.puts(s"(kaitai-read $ksName nil nil nil)")
+      out.dec
+    }
+  }
+
   override def runReadCalc(): Unit = ()
   override def seek(io: String, pos: Ast.expr): Unit = ()
-
-  override val translator: CLispTranslator = new CLispTranslator(typeProvider, importList)
 
   // Defined in LowerHyphenCaseClasses
   // This is a trait that can be used in any LanguageCompiler subclass
@@ -160,7 +330,36 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def useIO(ioEx: Ast.expr): String = ""
 
   // Members declared in io.kaitai.struct.languages.components.NoNeedForFullClassPath
-  override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = ()
+
+  /**
+    * Generate a constructor
+    *
+    * For Common LISP and CLOS, this is usually the generic function
+    * initialize-instance.  This is called by make-instance.
+    *
+    * All we really want to do in here is call "read" so that the
+    * class is Resource Acquisition Is Initialization (RAII) friendly.
+    */
+  override def classConstructorHeader(name: String, parentType: DataType, rootClassName: String, isHybrid: Boolean, params: List[ParamDefSpec]): Unit = {
+    // The :after makes initialize-instance act like a traditional
+    // constructor.
+    // If you don't include it, you're responsible for initializing
+    // the slots based on :initarg and :initform options in the
+    // defclass.  We just want to run an additional method after
+    // the slots are initialized.
+    out.puts(s"(defmethod initialize-instance :after ((ks ${type2class(name)}) &rest initargs)")
+    out.puts("  (kaitai-read ks nil nil nil)")
+  }
+
+  /**
+    * Generate the constructor footer
+    *
+    */
+  override def classConstructorFooter: Unit = {
+    out.dec
+    out.puts(")")
+    out.puts    
+  }
 
   /**
     * Renders the class footer
@@ -171,6 +370,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.dec
     out.putCloseParen()
     out.puts
+    out.puts    
   }
 
   /**
@@ -179,7 +379,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     * @param name the name of the class
     */
   override def classHeader(name: String): Unit = {
-    out.puts(s"(defclass ${type2class(name)} (kaitai-struct)")
+    out.puts(s"(defclass ${type2class(name)} (${kstructName}:${kstructName})")
     out.inc
     out.puts
   }
@@ -213,8 +413,30 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   }
 
   def localTemporaryName(id: io.kaitai.struct.format.Identifier): String = ""
-  def privateMemberName(id: io.kaitai.struct.format.Identifier): String = ""
-  def publicMemberName(id: io.kaitai.struct.format.Identifier): String = ""
+
+  /**
+    * Return the name of a private member
+    * This returns a string representation of a private member name
+    *
+    * In Common LISP, setting variables with setf on objects requires a slot-value
+    * function call to access an object's slot.
+    * This function doesn't call slot-value, perhaps it should.
+    *
+    * @param id identifier of a member variable to get the name for
+    * @return the name of the private member variable
+    */
+  def privateMemberName(id: io.kaitai.struct.format.Identifier): String = {
+    id match {
+      case IoIdentifier => s"io"
+      case RootIdentifier => s"root"
+      case ParentIdentifier => s"parent"
+      case _ => idToStr(id)
+    }
+  }
+
+  def publicMemberName(id: io.kaitai.struct.format.Identifier): String = {
+    idToStr(id)
+  }
 
   // Members declared in io.kaitai.struct.languages.components.SingleOutputFile
   override def outFileName(topClassName: String): String = s"${type2class(topClassName)}.lisp"
@@ -273,9 +495,14 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 }
 
 object CLispCompiler extends LanguageCompilerStatic
-  with LowerHyphenCaseClasses {
+    with LowerHyphenCaseClasses
+    with StreamStructNames {
   override def getCompiler(
     tp: ClassTypeProvider,
     config: RuntimeConfig
   ): LanguageCompiler = new CLispCompiler(tp, config)
+
+  // Members declared in io.kaitai.struct.languages.components.StreamStructNames
+  override def kstreamName: String = "kaitai-stream"
+  override def kstructName: String = "kaitai-struct"
 }

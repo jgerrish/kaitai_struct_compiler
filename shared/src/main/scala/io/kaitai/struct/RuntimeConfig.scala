@@ -93,6 +93,11 @@ case class JavaRuntimeConfig(
   * @param nimModule Path of Nim runtime module
   * @param nimOpaque Directory of opaque Nim modules
   * @param clispPackage Name of Common LISP runtime package
+  * @param useAccessors Use Common LISP CLOS accessors
+  *        Sometimes you may not want to use accessors if there are a
+  *        lot of automatically generated structures with the same
+  *        name (e.g. "id", "name" or "length") and the likelihood
+  *        of name collisions.
   */
 case class RuntimeConfig(
   autoRead: Boolean = true,
@@ -107,5 +112,6 @@ case class RuntimeConfig(
   pythonPackage: String = "",
   nimModule: String = "kaitai_struct_nim_runtime",
   nimOpaque: String = "",
-  clispPackage: String = "kaitai-struct-clisp-runtime"
+  clispPackage: String = "kaitai-struct-clisp-runtime",
+  useAccessors: Boolean = true,
 )

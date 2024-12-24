@@ -10,7 +10,7 @@ class CLispTranslator(provider: TypeProvider, importList: ImportList) extends Ba
   override def doEnumById(enumTypeAbs: List[String], id: String): String = ""
   override def doEnumByLabel(enumTypeAbs: List[String], label: String): String = ""
   override def doIfExp(condition: Ast.expr, ifTrue: Ast.expr, ifFalse: Ast.expr): String = ""
-  override def doName(s: String): String = ""
+  override def doName(s: String): String = s
 
   // Members declared in io.kaitai.struct.translators.CommonMethods
   override def arrayFirst(a: Ast.expr): String = ""
