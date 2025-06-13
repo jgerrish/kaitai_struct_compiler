@@ -7,7 +7,7 @@ import io.kaitai.struct.exprlang.Ast.expr
 import io.kaitai.struct.format._
 import io.kaitai.struct.languages.components._
 import io.kaitai.struct.translators.PythonTranslator
-import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, StringLanguageOutputWriter, Utils}
+import io.kaitai.struct.{ClassTypeProvider, ImportList, RuntimeConfig, StringLanguageOutputWriter, Utils, ExternalType}
 
 class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
@@ -24,7 +24,7 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   import PythonCompiler._
 
-  override val translator = new PythonTranslator(typeProvider, importList)
+  override val translator = new PythonTranslator(typeProvider, importList, config)
 
   override def innerDocstrings = true
 
@@ -77,16 +77,8 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts
   }
 
-  override def externalClassDeclaration(classSpec: ClassSpec): Unit = {
-    val name = classSpec.name.head
-    importList.add(
-      if (config.pythonPackage.nonEmpty) {
-        s"from ${config.pythonPackage} import $name"
-      } else {
-        s"import $name"
-      }
-    )
-  }
+  override def externalTypeDeclaration(extType: ExternalType): Unit =
+    PythonCompiler.externalTypeDeclaration(extType, importList, config)
 
   override def classHeader(name: String): Unit = {
     out.puts(s"class ${type2class(name)}($kstructName):")
@@ -101,7 +93,11 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.inc
     out.puts("self._io = _io")
     out.puts("self._parent = _parent")
-    out.puts("self._root = _root if _root else self")
+    if (name == rootClassName) {
+      out.puts("self._root = _root if _root else self")
+    } else {
+      out.puts("self._root = _root")
+    }
 
     if (isHybrid)
       out.puts("self._is_le = _is_le")
@@ -361,7 +357,12 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case _: BytesEosType =>
         s"$io.read_bytes_full()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
-        s"$io.read_bytes_term($terminator, ${bool2Py(include)}, ${bool2Py(consume)}, ${bool2Py(eosError)})"
+        if (terminator.length == 1) {
+          val term = terminator.head & 0xff
+          s"$io.read_bytes_term($term, ${bool2Py(include)}, ${bool2Py(consume)}, ${bool2Py(eosError)})"
+        } else {
+          s"$io.read_bytes_term_multi(${translator.doByteArrayLiteral(terminator)}, ${bool2Py(include)}, ${bool2Py(consume)}, ${bool2Py(eosError)})"
+        }
       case BitsType1(bitEndian) =>
         s"$io.read_bits_int_${bitEndian.toSuffix}(1) != 0"
       case BitsType(width: Int, bitEndian) =>
@@ -382,17 +383,23 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
           }
           s", $parent, self._root$addEndian"
         }
-        s"${userType2class(t)}($addParams$io$addArgs)"
+        s"${types2class(t.classSpec.get.name, t.isExternal(typeProvider.nowClass))}($addParams$io$addArgs)"
     }
   }
 
-  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Int], include: Boolean) = {
+  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Seq[Byte]], include: Boolean) = {
     val expr1 = padRight match {
       case Some(padByte) => s"$kstreamName.bytes_strip_right($expr0, $padByte)"
       case None => expr0
     }
     val expr2 = terminator match {
-      case Some(term) => s"$kstreamName.bytes_terminate($expr1, $term, ${bool2Py(include)})"
+      case Some(term) =>
+        if (term.length == 1) {
+          val t = term.head & 0xff
+          s"$kstreamName.bytes_terminate($expr1, $t, ${bool2Py(include)})"
+        } else {
+          s"$kstreamName.bytes_terminate_multi($expr1, ${translator.doByteArrayLiteral(term)}, ${bool2Py(include)})"
+        }
       case None => expr1
     }
     expr2
@@ -400,6 +407,17 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def userTypeDebugRead(id: String, dataType: DataType, assignType: DataType): Unit =
     out.puts(s"$id._read()")
+
+  override def tryFinally(tryBlock: () => Unit, finallyBlock: () => Unit): Unit = {
+    out.puts("try:")
+    out.inc
+    tryBlock()
+    out.dec
+    out.puts("finally:")
+    out.inc
+    finallyBlock()
+    out.dec
+  }
 
   override def switchStart(id: Identifier, on: Ast.expr): Unit = {}
   override def switchCaseStart(condition: Ast.expr): Unit = {}
@@ -478,36 +496,44 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def idToStr(id: Identifier): String = PythonCompiler.idToStr(id)
 
-  override def publicMemberName(id: Identifier): String = PythonCompiler.publicMemberName(id)
+  override def publicMemberName(id: Identifier): String =
+    id match {
+      case InstanceIdentifier(name) => name
+      case _ => idToStr(id)
+    }
 
-  override def privateMemberName(id: Identifier): String = s"self.${idToStr(id)}"
+  override def privateMemberName(id: Identifier): String = PythonCompiler.privateMemberName(id)
 
   override def localTemporaryName(id: Identifier): String = s"_t_${idToStr(id)}"
 
   override def ksErrorName(err: KSError): String = PythonCompiler.ksErrorName(err)
 
   override def attrValidateExpr(
-    attrId: Identifier,
-    attrType: DataType,
+    attr: AttrLikeSpec,
     checkExpr: Ast.expr,
     err: KSError,
     errArgs: List[Ast.expr]
+  ): Unit =
+    attrValidate(s"not ${translator.translate(checkExpr)}", err, errArgs)
+
+  override def attrValidateInEnum(
+    attr: AttrLikeSpec,
+    et: EnumType,
+    valueExpr: Ast.expr,
+    err: ValidationNotInEnumError,
+    errArgs: List[Ast.expr]
   ): Unit = {
+    val enumSpec = et.enumSpec.get
+    val enumRef = types2class(enumSpec.name, enumSpec.isExternal(typeProvider.nowClass))
+    attrValidate(s"not isinstance(${translator.translate(valueExpr)}, $enumRef)", err, errArgs)
+  }
+
+  private def attrValidate(failCondExpr: String, err: KSError, errArgs: List[Ast.expr]): Unit = {
     val errArgsStr = errArgs.map(translator.translate).mkString(", ")
-    out.puts(s"if not ${translator.translate(checkExpr)}:")
+    out.puts(s"if $failCondExpr:")
     out.inc
     out.puts(s"raise ${ksErrorName(err)}($errArgsStr)")
     out.dec
-  }
-
-  def userType2class(t: UserType): String = {
-    val name = t.classSpec.get.name
-    val prefix = if (t.isExternal(typeProvider.nowClass)) {
-      s"${name.head}."
-    } else {
-      ""
-    }
-    s"$prefix${types2class(name)}"
   }
 }
 
@@ -529,11 +555,7 @@ object PythonCompiler extends LanguageCompilerStatic
       case RawIdentifier(innerId) => s"_raw_${idToStr(innerId)}"
     }
 
-  def publicMemberName(id: Identifier): String =
-    id match {
-      case InstanceIdentifier(name) => name
-      case _ => idToStr(id)
-    }
+  def privateMemberName(id: Identifier): String = s"self.${idToStr(id)}"
 
   override def kstreamName: String = "KaitaiStream"
   override def kstructName: String = "KaitaiStruct"
@@ -543,5 +565,23 @@ object PythonCompiler extends LanguageCompilerStatic
     case _ => s"kaitaistruct.${err.name}"
   }
 
-  def types2class(name: List[String]): String = name.map(x => type2class(x)).mkString(".")
+  def types2class(name: List[String], isExternal: Boolean): String = {
+    val prefix = if (isExternal) {
+      s"${name.head}."
+    } else {
+      ""
+    }
+    prefix + name.map(x => type2class(x)).mkString(".")
+  }
+
+  def externalTypeDeclaration(extType: ExternalType, importList: ImportList, config: RuntimeConfig): Unit = {
+    val moduleName = extType.name.head
+    importList.add(
+      if (config.pythonPackage.nonEmpty) {
+        s"from ${config.pythonPackage} import $moduleName"
+      } else {
+        s"import $moduleName"
+      }
+    )
+  }
 }

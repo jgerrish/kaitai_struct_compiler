@@ -1,13 +1,61 @@
 package io.kaitai.struct.translators
 
-import io.kaitai.struct.{ImportList, Utils}
+import io.kaitai.struct.{ExternalEnum, ImportList, RuntimeConfig, Utils}
 import io.kaitai.struct.datatype.DataType._
 import io.kaitai.struct.exprlang.Ast
-import io.kaitai.struct.format.Identifier
+import io.kaitai.struct.format.{EnumSpec, Identifier}
 import io.kaitai.struct.languages.{PythonCompiler, RubyCompiler}
 
-class PythonTranslator(provider: TypeProvider, importList: ImportList) extends BaseTranslator(provider) {
-  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
+class PythonTranslator(provider: TypeProvider, importList: ImportList, config: RuntimeConfig) extends BaseTranslator(provider) {
+  /**
+  * @see https://docs.python.org/3/reference/expressions.html#operator-precedence
+  */
+  override val OPERATOR_PRECEDENCE = Map[Ast.binaryop, Int](
+    Ast.operator.Mult -> 130,
+    Ast.operator.Div -> 130,
+    Ast.operator.Mod -> 130,
+    Ast.operator.Add -> 120,
+    Ast.operator.Sub -> 120,
+    Ast.operator.LShift -> 110,
+    Ast.operator.RShift -> 110,
+    Ast.operator.BitAnd -> 100,
+    Ast.operator.BitXor -> 90,
+    Ast.operator.BitOr -> 80,
+    Ast.cmpop.Lt -> 70,
+    Ast.cmpop.LtE -> 70,
+    Ast.cmpop.Gt -> 70,
+    Ast.cmpop.GtE -> 70,
+    Ast.cmpop.Eq -> 70,
+    Ast.cmpop.NotEq -> 70
+  )
+
+  override def translate(v: Ast.expr, extPrec: Int): String = {
+    val expr = super.translate(v, extPrec)
+    v match {
+      case Ast.expr.UnaryOp(op: Ast.unaryop, inner: Ast.expr) =>
+        // This is necessary so that `true == (not false)` is not incorrectly translated
+        // as `True == not False`, which does not work in Python:
+        //
+        // ```
+        //     True == not False
+        //             ^^^
+        // SyntaxError: invalid syntax
+        // ```
+        //
+        // To make this work, we need to wrap `not False` here in parentheses as
+        // `True == (not False)`. For now, the easiest way to do this is to just wrap all
+        // `not` operations in parentheses (although in most cases this is unnecessary).
+        if (op == Ast.unaryop.Not) {
+          s"($expr)"
+        } else {
+          expr
+        }
+      case _ =>
+        expr
+    }
+  }
+
+  override def genericBinOp(left: Ast.expr, op: Ast.binaryop, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Div) =>
         genericBinOpStr(left, op, "//", right, extPrec)
@@ -54,12 +102,17 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
   override def doName(s: String) =
     s
   override def doInternalName(id: Identifier): String =
-    s"self.${PythonCompiler.publicMemberName(id)}"
+    PythonCompiler.privateMemberName(id)
 
-  override def doEnumByLabel(enumTypeAbs: List[String], label: String): String =
-    s"${PythonCompiler.types2class(enumTypeAbs)}.$label"
-  override def doEnumById(enumTypeAbs: List[String], id: String): String =
-    s"${PythonCompiler.kstreamName}.resolve_enum(${PythonCompiler.types2class(enumTypeAbs)}, $id)"
+  override def doEnumByLabel(enumSpec: EnumSpec, label: String): String = {
+    val isExternal = enumSpec.isExternal(provider.nowClass)
+    if (isExternal) {
+      PythonCompiler.externalTypeDeclaration(ExternalEnum(enumSpec), importList, config)
+    }
+    s"${PythonCompiler.types2class(enumSpec.name, isExternal)}.$label"
+  }
+  override def doEnumById(enumSpec: EnumSpec, id: String): String =
+    s"${PythonCompiler.kstreamName}.resolve_enum(${PythonCompiler.types2class(enumSpec.name, enumSpec.isExternal(provider.nowClass))}, $id)"
 
   override def booleanOp(op: Ast.boolop) = op match {
     case Ast.boolop.Or => "or"
@@ -94,7 +147,7 @@ class PythonTranslator(provider: TypeProvider, importList: ImportList) extends B
   override def intToStr(i: Ast.expr): String =
     s"str(${translate(i)})"
   override def bytesToStr(bytesExpr: String, encoding: String): String =
-    s"""($bytesExpr).decode("$encoding")"""
+    s"""($bytesExpr).decode(${doStringLiteral(encoding)})"""
 
   override def bytesLength(value: Ast.expr): String =
     s"len(${translate(value)})"

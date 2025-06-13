@@ -1,6 +1,7 @@
 package io.kaitai.struct
 
-import io.kaitai.struct.format.{ClassSpec, ClassSpecs, GenericStructClassSpec, MetaSpec}
+import io.kaitai.struct.format.{ClassSpec, ClassSpecs, MetaSpec}
+// import io.kaitai.struct.format.{ClassSpec, ClassSpecs, GenericStructClassSpec, MetaSpec}
 import io.kaitai.struct.languages.{CLispCompiler, GoCompiler, NimCompiler, RustCompiler}
 import io.kaitai.struct.languages.components.LanguageCompilerStatic
 import io.kaitai.struct.precompile._
@@ -59,10 +60,6 @@ object Main {
     // Warnings
     val styleWarnings = new StyleCheckIds(specs).run()
     val encodingProblems = new CanonicalizeEncodingNames(specs).run()
-
-    specs.forEachTopLevel((_, spec) => {
-      spec.parentClass = GenericStructClassSpec
-    })
 
     resolveTypeProblems ++ typeValidatorProblems ++ styleWarnings ++ encodingProblems
   }

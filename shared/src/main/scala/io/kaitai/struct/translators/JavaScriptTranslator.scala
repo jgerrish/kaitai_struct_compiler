@@ -1,13 +1,15 @@
 package io.kaitai.struct.translators
 
-import io.kaitai.struct.Utils
+import io.kaitai.struct.{ImportList, Utils}
 import io.kaitai.struct.datatype.DataType._
 import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.exprlang.Ast.expr
-import io.kaitai.struct.format.Identifier
+import io.kaitai.struct.format.{EnumSpec, Identifier}
 import io.kaitai.struct.languages.JavaScriptCompiler
 
-class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provider) {
+class JavaScriptTranslator(provider: TypeProvider, importList: ImportList) extends BaseTranslator(provider) {
+  override def doByteArrayLiteral(arr: Seq[Byte]): String =
+    s"new Uint8Array([${arr.map(_ & 0xff).mkString(", ")}])"
   override def doByteArrayNonLiteral(elts: Seq[Ast.expr]): String =
     s"new Uint8Array([${elts.map(translate).mkString(", ")}])"
 
@@ -24,7 +26,7 @@ class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provid
   override def strLiteralGenericCC(code: Char): String =
     "\\x%02x".format(code.toInt)
 
-  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.binaryop, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Div) =>
         s"Math.floor(${super.genericBinOp(left, op, right, 0)})"
@@ -54,15 +56,21 @@ class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provid
   }
 
   override def doInternalName(id: Identifier): String =
-    s"this.${JavaScriptCompiler.publicMemberName(id)}"
+    JavaScriptCompiler.privateMemberName(id)
 
-  override def doEnumByLabel(enumType: List[String], label: String): String =
-    s"${JavaScriptCompiler.types2class(enumType)}.${Utils.upperUnderscoreCase(label)}"
-  override def doEnumById(enumTypeAbs: List[String], label: String): String =
+  override def doEnumByLabel(enumSpec: EnumSpec, label: String): String = {
+    val isExternal = enumSpec.isExternal(provider.nowClass)
+    if (isExternal) {
+      val className = JavaScriptCompiler.type2class(enumSpec.name.head)
+      importList.add(s"./$className")
+    }
+    s"${JavaScriptCompiler.types2class(enumSpec.name, isExternal)}.${Utils.upperUnderscoreCase(label)}"
+  }
+  override def doEnumById(enumSpec: EnumSpec, id: String): String =
     // Just an integer, without any casts / resolutions - one would have to look up constants manually
-    label
+    id
 
-  override def doBytesCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr): String =
+  override def doBytesCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr, extPrec: Int): String =
     s"(${JavaScriptCompiler.kstreamName}.byteArrayCompare(${translate(left)}, ${translate(right)}) ${cmpOp(op)} 0)"
 
   override def arraySubscript(container: expr, idx: expr): String =
@@ -83,7 +91,7 @@ class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provid
     * accepted as one of the fastest (other top methods are +-0.3%), and it's
     * pretty concise and readable.
     *
-    * @see http://stackoverflow.com/questions/7820683/convert-boolean-result-into-number-integer
+    * @see https://stackoverflow.com/questions/7820683/convert-boolean-result-into-number-integer
     * @param v boolean expression to convert
     * @return string rendition of conversion
     */
@@ -96,7 +104,7 @@ class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provid
     * relatively easy to add compatibility polyfill for non-supporting environments
     * (see MDN page).
     *
-    * @see http://stackoverflow.com/a/596503/487064
+    * @see https://stackoverflow.com/a/596503/487064
     * @see https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Math/trunc
     * @param v float expression to convert
     * @return string rendition of conversion
@@ -108,12 +116,12 @@ class JavaScriptTranslator(provider: TypeProvider) extends BaseTranslator(provid
     s"(${translate(i)}).toString()"
 
   override def bytesToStr(bytesExpr: String, encoding: String): String =
-    s"""${JavaScriptCompiler.kstreamName}.bytesToStr($bytesExpr, "$encoding")"""
+    s"""${JavaScriptCompiler.kstreamName}.bytesToStr($bytesExpr, ${doStringLiteral(encoding)})"""
 
   override def strLength(s: expr): String =
     s"${translate(s, METHOD_PRECEDENCE)}.length"
 
-  // http://stackoverflow.com/a/36525647/2055163
+  // https://stackoverflow.com/a/36525647/2055163
   override def strReverse(s: expr): String =
     s"Array.from(${translate(s)}).reverse().join('')"
 

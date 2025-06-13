@@ -21,7 +21,7 @@ class NimClassCompiler(
 
   override def compile: CompileLog.SpecSuccess = {
     lang.fileHeader(classNameFlattened(topClass))
-    compileExternalClasses(topClass)
+    compileExternalTypes(topClass)
 
     // if there are any enums at all maybe we can detect it and not generate this template
 //    nimlang.enumTemplate
@@ -95,12 +95,12 @@ class NimClassCompiler(
     compileInstanceDoc(instName, instSpec)
     lang.instanceCheckCacheAndReturn(instName, dataType)
 
+    lang.instanceSetCalculated(instName)
     instSpec match {
       case vi: ValueInstanceSpec =>
         lang.attrParseIfHeader(instName, vi.ifExpr)
         lang.instanceCalculate(instName, dataType, vi.value)
         lang.attrParseIfFooter(vi.ifExpr)
-        lang.instanceSetCalculated(instName)
       case pi: ParseInstanceSpec =>
         lang.attrParse(pi, instName, endian)
     }

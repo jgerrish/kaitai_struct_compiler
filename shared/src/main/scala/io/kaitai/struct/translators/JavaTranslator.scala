@@ -5,7 +5,7 @@ import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.exprlang.Ast._
 import io.kaitai.struct.datatype.DataType
 import io.kaitai.struct.datatype.DataType._
-import io.kaitai.struct.format.Identifier
+import io.kaitai.struct.format.{EnumSpec, Identifier}
 import io.kaitai.struct.languages.JavaCompiler
 
 class JavaTranslator(provider: TypeProvider, importList: ImportList) extends BaseTranslator(provider) {
@@ -32,7 +32,7 @@ class JavaTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   }
 
   override def doArrayLiteral(t: DataType, value: Seq[expr]): String = {
-    val javaType = JavaCompiler.kaitaiType2JavaTypeBoxed(t)
+    val javaType = JavaCompiler.kaitaiType2JavaTypeBoxed(t, importList)
     val commaStr = value.map((v) => translate(v)).mkString(", ")
 
     importList.add("java.util.ArrayList")
@@ -45,7 +45,7 @@ class JavaTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   override def doByteArrayNonLiteral(elts: Seq[expr]): String =
     s"new byte[] { ${elts.map(translate).mkString(", ")} }"
 
-  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.binaryop, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Mod) =>
         s"${JavaCompiler.kstreamName}.mod(${translate(left)}, ${translate(right)})"
@@ -64,28 +64,28 @@ class JavaTranslator(provider: TypeProvider, importList: ImportList) extends Bas
     }
 
   override def doInternalName(id: Identifier): String =
-    s"${JavaCompiler.publicMemberName(id)}()"
+    JavaCompiler.privateMemberName(id)
 
-  override def doEnumByLabel(enumTypeAbs: List[String], label: String): String =
-    s"${enumClass(enumTypeAbs)}.${Utils.upperUnderscoreCase(label)}"
-  override def doEnumById(enumTypeAbs: List[String], id: String): String =
-    s"${enumClass(enumTypeAbs)}.byId($id)"
+  override def doEnumByLabel(enumSpec: EnumSpec, label: String): String =
+    s"${enumClass(enumSpec.name)}.${Utils.upperUnderscoreCase(label)}"
+  override def doEnumById(enumSpec: EnumSpec, id: String): String =
+    s"${enumClass(enumSpec.name)}.byId($id)"
 
   def enumClass(enumTypeAbs: List[String]): String = {
     val enumTypeRel = Utils.relClass(enumTypeAbs, provider.nowClass.name)
     enumTypeRel.map((x) => Utils.upperCamelCase(x)).mkString(".")
   }
 
-  override def doStrCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr): String = op match {
+  override def doStrCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr, extPrec: Int): String = op match {
     case Ast.cmpop.Eq =>
-      s"${translate(left)}.equals(${translate(right)})"
+      s"${translate(left, METHOD_PRECEDENCE)}.equals(${translate(right)})"
     case Ast.cmpop.NotEq =>
-      s"!(${translate(left)}).equals(${translate(right)})"
+      s"!${translate(left, METHOD_PRECEDENCE)}.equals(${translate(right)})"
     case _ =>
-      s"(${translate(left)}.compareTo(${translate(right)}) ${cmpOp(op)} 0)"
+      s"(${translate(left, METHOD_PRECEDENCE)}.compareTo(${translate(right)}) ${cmpOp(op)} 0)"
   }
 
-  override def doBytesCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr): String = {
+  override def doBytesCompareOp(left: Ast.expr, op: Ast.cmpop, right: Ast.expr, extPrec: Int): String = {
     op match {
       case Ast.cmpop.Eq =>
         importList.add("java.util.Arrays")
@@ -103,7 +103,7 @@ class JavaTranslator(provider: TypeProvider, importList: ImportList) extends Bas
   override def doIfExp(condition: expr, ifTrue: expr, ifFalse: expr): String =
     s"(${translate(condition)} ? ${translate(ifTrue)} : ${translate(ifFalse)})"
   override def doCast(value: Ast.expr, typeName: DataType): String =
-    s"((${JavaCompiler.kaitaiType2JavaType(typeName)}) (${translate(value)}))"
+    s"((${JavaCompiler.kaitaiType2JavaType(typeName, importList)}) (${translate(value)}))"
 
   // Predefined methods of various types
   override def strToInt(s: expr, base: expr): String =
@@ -132,7 +132,7 @@ class JavaTranslator(provider: TypeProvider, importList: ImportList) extends Bas
         s"StandardCharsets.${charsetConst}"
       case None =>
         importList.add("java.nio.charset.Charset")
-        s"""Charset.forName("$encoding")"""
+        s"""Charset.forName(${doStringLiteral(encoding)})"""
     }
     s"new String($bytesExpr, $charsetExpr)"
   }

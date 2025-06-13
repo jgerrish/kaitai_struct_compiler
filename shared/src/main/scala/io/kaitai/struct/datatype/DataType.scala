@@ -4,6 +4,7 @@ import io.kaitai.struct.exprlang.{Ast, Expressions}
 import io.kaitai.struct.format._
 import io.kaitai.struct.problems.KSYParseError
 import io.kaitai.struct.translators.TypeDetector
+import io.kaitai.struct.precompile.CanonicalizeEncodingNames
 
 import scala.collection.immutable.SortedMap
 
@@ -70,20 +71,20 @@ object DataType {
     override def process = None
   }
   case class BytesEosType(
-    terminator: Option[Int],
+    terminator: Option[Seq[Byte]],
     include: Boolean,
     padRight: Option[Int],
     override val process: Option[ProcessExpr]
   ) extends BytesType
   case class BytesLimitType(
     size: Ast.expr,
-    terminator: Option[Int],
+    terminator: Option[Seq[Byte]],
     include: Boolean,
     padRight: Option[Int],
     override val process: Option[ProcessExpr]
   ) extends BytesType
   case class BytesTerminatedType(
-    terminator: Int,
+    terminator: Seq[Byte],
     include: Boolean,
     consume: Boolean,
     eosError: Boolean,
@@ -232,6 +233,7 @@ object DataType {
     override def isOwning: Boolean = false
   }
 
+  /** Represents `_parent: false` expression which means that type explicitly has no parent. */
   val USER_TYPE_NO_PARENT = Ast.expr.Bool(false)
 
   case object AnyType extends DataType
@@ -252,6 +254,16 @@ object DataType {
 
   case class EnumType(name: List[String], basedOn: IntType) extends DataType {
     var enumSpec: Option[EnumSpec] = None
+
+    /**
+      * Determines whether the enum represented by this `EnumType` instance
+      * is external from the perspective of the given `ClassSpec` in which it is
+      * used (via `seq`, `instances` or `params`).
+      * @param curClass class spec from which the local/external relationship
+      * should be evaluated
+      */
+    def isExternal(curClass: ClassSpec): Boolean =
+      enumSpec.get.isExternal(curClass)
   }
 
   case class SwitchType(
@@ -418,9 +430,27 @@ object DataType {
         case "str" | "strz" =>
           val enc = getEncoding(arg.encoding, metaDef, path)
 
-          // "strz" makes terminator = 0 by default
+          // "strz" selects the appropriate null terminator depending on the "encoding", i.e. 2 zero
+          // bytes for UTF-16*, 4 zero bytes for UTF-32* and 1 zero byte for all other encodings
           val arg2 = if (dt == "strz") {
-            arg.copy(terminator = arg.terminator.orElse(Some(0)))
+            val term = arg.terminator match {
+              case Some(t) =>
+                t
+              case None =>
+                // FIXME: ideally, this null terminator resolution should not happen here in the
+                // "YAML parsing stage", but later on some intermediate representation after the
+                // `CanonicalizeEncodingNames` precompile step has run. See the discussion in
+                // https://github.com/kaitai-io/kaitai_struct_compiler/pull/278#discussion_r1527198115
+                val (newEncoding, problem) = CanonicalizeEncodingNames.canonicalizeName(enc)
+                val nullTerm: Seq[Byte] = newEncoding match {
+                  /** @note Must be kept in sync with [[EncodingList.canonicalToAlias]] */
+                  case "UTF-16LE" | "UTF-16BE" => Seq(0, 0)
+                  case "UTF-32LE" | "UTF-32BE" => Seq(0, 0, 0, 0)
+                  case _ => Seq(0)
+                }
+                nullTerm
+            }
+            arg.copy(terminator = Some(term))
           } else {
             arg
           }
