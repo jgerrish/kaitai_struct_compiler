@@ -36,7 +36,7 @@ class ExpressionsSpec extends AnyFunSpec {
       Expressions.parse("0o644") should be (IntNum(420))
     }
 
-    it("parses octal integer with undescores") {
+    it("parses octal integer with underscores") {
       Expressions.parse("0o06_44") should be (IntNum(420))
     }
 
@@ -44,7 +44,7 @@ class ExpressionsSpec extends AnyFunSpec {
       Expressions.parse("0b10101010") should be (IntNum(0xaa))
     }
 
-    it("parses binary integer with undescores") {
+    it("parses binary integer with underscores") {
       Expressions.parse("0b1010_1_010") should be (IntNum(0xaa))
     }
 
@@ -402,6 +402,21 @@ class ExpressionsSpec extends AnyFunSpec {
 
     it("parses foo.bar") {
       Expressions.parse("foo.bar") should be (Attribute(Name(identifier("foo")),identifier("bar")))
+    }
+
+    describe("strings") {
+      it("single-quoted") {
+        // \" -> \"
+        // \\ -> \\
+        Expressions.parse(""" ' \" \\ ' """) should be(Str(" \\\" \\\\ "))
+        Expressions.parse(""" 'ASCII\\x' """) should be(Str("ASCII\\\\x"))
+      }
+      it("double-quoted") {
+        // \" -> "
+        // \\ -> \
+        Expressions.parse(""" " \" \\ " """) should be(Str(" \" \\ "))
+        Expressions.parse(""" "ASCII\\'x" """) should be(Str("ASCII\\'x"))
+      }
     }
 
     describe("f-strings") {

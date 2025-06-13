@@ -438,7 +438,12 @@ class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case _: BytesEosType =>
         s"$io.readBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
-        s"$io.readBytesTerm((byte) $terminator, $include, $consume, $eosError)"
+        if (terminator.length == 1) {
+          val term = terminator.head & 0xff
+          s"$io.readBytesTerm((byte) $term, $include, $consume, $eosError)"
+        } else {
+          s"$io.readBytesTermMulti(${translator.doByteArrayLiteral(terminator)}, $include, $consume, $eosError)"
+        }
       case BitsType1(bitEndian) =>
         s"$io.readBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}(1) != 0"
       case BitsType(width: Int, bitEndian) =>
@@ -491,13 +496,19 @@ class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     }
   }
 
-  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Int], include: Boolean) = {
+  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Seq[Byte]], include: Boolean) = {
     val expr1 = padRight match {
       case Some(padByte) => s"$kstreamName.bytesStripRight($expr0, (byte) $padByte)"
       case None => expr0
     }
     val expr2 = terminator match {
-      case Some(term) => s"$kstreamName.bytesTerminate($expr1, (byte) $term, $include)"
+      case Some(term) =>
+        if (term.length == 1) {
+          val t = term.head & 0xff
+          s"$kstreamName.bytesTerminate($expr1, (byte) $t, $include)"
+        } else {
+          s"$kstreamName.bytesTerminateMulti($expr1, ${translator.doByteArrayLiteral(term)}, $include)"
+        }
       case None => expr1
     }
     expr2
@@ -510,6 +521,18 @@ class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       id
     }
     out.puts(s"$expr._read();")
+  }
+
+  override def tryFinally(tryBlock: () => Unit, finallyBlock: () => Unit): Unit = {
+    out.puts("try {")
+    out.inc
+    tryBlock()
+    out.dec
+    out.puts("} finally {")
+    out.inc
+    finallyBlock()
+    out.dec
+    out.puts("}")
   }
 
   override def switchCasesRender[T](
@@ -743,11 +766,23 @@ class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def idToStr(id: Identifier): String = JavaCompiler.idToStr(id)
 
-  override def publicMemberName(id: Identifier) = JavaCompiler.publicMemberName(id)
+  override def publicMemberName(id: Identifier): String = idToStr(id)
 
-  override def privateMemberName(id: Identifier): String = s"this.${idToStr(id)}"
+  override def privateMemberName(id: Identifier): String = JavaCompiler.privateMemberName(id)
 
   override def localTemporaryName(id: Identifier): String = s"_t_${idToStr(id)}"
+
+  def kaitaiType2JavaType(attrType: DataType): String =
+    JavaCompiler.kaitaiType2JavaType(attrType, importList)
+
+  def kaitaiType2JavaType(attrType: DataType, isNullable: Boolean): String =
+    JavaCompiler.kaitaiType2JavaType(attrType, isNullable, importList)
+
+  def kaitaiType2JavaTypePrim(attrType: DataType): String =
+    JavaCompiler.kaitaiType2JavaTypePrim(attrType, importList)
+
+  def kaitaiType2JavaTypeBoxed(attrType: DataType): String =
+    JavaCompiler.kaitaiType2JavaTypeBoxed(attrType, importList)
 
   override def ksErrorName(err: KSError): String = err match {
     case EndOfStreamError => config.java.endOfStreamErrorClass
@@ -756,14 +791,29 @@ class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   }
 
   override def attrValidateExpr(
-    attrId: Identifier,
-    attrType: DataType,
+    attr: AttrLikeSpec,
     checkExpr: Ast.expr,
     err: KSError,
     errArgs: List[Ast.expr]
+  ): Unit =
+    attrValidate(s"!(${translator.translate(checkExpr)})", err, errArgs)
+
+  override def attrValidateInEnum(
+    attr: AttrLikeSpec,
+    et: EnumType,
+    valueExpr: Ast.expr,
+    err: ValidationNotInEnumError,
+    errArgs: List[Ast.expr]
   ): Unit = {
+    // NOTE: this condition works for now because we haven't implemented
+    // https://github.com/kaitai-io/kaitai_struct/issues/778 for Java yet, but
+    // it will need to be changed when we do.
+    attrValidate(s"${translator.translate(valueExpr)} == null", err, errArgs)
+  }
+
+  private def attrValidate(failCondExpr: String, err: KSError, errArgs: List[Ast.expr]): Unit = {
     val errArgsStr = errArgs.map(translator.translate).mkString(", ")
-    out.puts(s"if (!(${translator.translate(checkExpr)})) {")
+    out.puts(s"if ($failCondExpr) {")
     out.inc
     out.puts(s"throw new ${ksErrorName(err)}($errArgsStr);")
     out.dec
@@ -789,15 +839,15 @@ object JavaCompiler extends LanguageCompilerStatic
       case IoStorageIdentifier(innerId) => s"_io_${idToStr(innerId)}"
     }
 
-  def publicMemberName(id: Identifier) = idToStr(id)
+  def privateMemberName(id: Identifier): String = s"this.${idToStr(id)}"
 
-  def kaitaiType2JavaType(attrType: DataType): String = kaitaiType2JavaTypePrim(attrType)
+  def kaitaiType2JavaType(attrType: DataType, importList: ImportList): String = kaitaiType2JavaTypePrim(attrType, importList)
 
-  def kaitaiType2JavaType(attrType: DataType, isNullable: Boolean): String =
+  def kaitaiType2JavaType(attrType: DataType, isNullable: Boolean, importList: ImportList): String =
     if (isNullable) {
-      kaitaiType2JavaTypeBoxed(attrType)
+      kaitaiType2JavaTypeBoxed(attrType, importList)
     } else {
-      kaitaiType2JavaTypePrim(attrType)
+      kaitaiType2JavaTypePrim(attrType, importList)
     }
 
   /**
@@ -807,7 +857,7 @@ object JavaCompiler extends LanguageCompilerStatic
     * @param attrType KS data type
     * @return Java data type
     */
-  def kaitaiType2JavaTypePrim(attrType: DataType): String = {
+  def kaitaiType2JavaTypePrim(attrType: DataType, importList: ImportList): String = {
     attrType match {
       case Int1Type(false) => "int"
       case IntMultiType(false, Width2, _) => "int"
@@ -838,9 +888,9 @@ object JavaCompiler extends LanguageCompilerStatic
       case t: UserType => types2class(t.name)
       case EnumType(name, _) => types2class(name)
 
-      case ArrayTypeInStream(_) | CalcArrayType(_, _) => kaitaiType2JavaTypeBoxed(attrType)
+      case _: ArrayType => kaitaiType2JavaTypeBoxed(attrType, importList)
 
-      case st: SwitchType => kaitaiType2JavaTypePrim(st.combinedType)
+      case st: SwitchType => kaitaiType2JavaTypePrim(st.combinedType, importList)
     }
   }
 
@@ -851,7 +901,7 @@ object JavaCompiler extends LanguageCompilerStatic
     * @param attrType KS data type
     * @return Java data type
     */
-  def kaitaiType2JavaTypeBoxed(attrType: DataType): String = {
+  def kaitaiType2JavaTypeBoxed(attrType: DataType, importList: ImportList): String = {
     attrType match {
       case Int1Type(false) => "Integer"
       case IntMultiType(false, Width2, _) => "Integer"
@@ -882,10 +932,12 @@ object JavaCompiler extends LanguageCompilerStatic
       case t: UserType => types2class(t.name)
       case EnumType(name, _) => types2class(name)
 
-      case ArrayTypeInStream(inType) => s"ArrayList<${kaitaiType2JavaTypeBoxed(inType)}>"
-      case CalcArrayType(inType, _) => s"ArrayList<${kaitaiType2JavaTypeBoxed(inType)}>"
+      case at: ArrayType => {
+        importList.add("java.util.ArrayList")
+        s"ArrayList<${kaitaiType2JavaTypeBoxed(at.elType, importList)}>"
+      }
 
-      case st: SwitchType => kaitaiType2JavaTypeBoxed(st.combinedType)
+      case st: SwitchType => kaitaiType2JavaTypeBoxed(st.combinedType, importList)
     }
   }
 

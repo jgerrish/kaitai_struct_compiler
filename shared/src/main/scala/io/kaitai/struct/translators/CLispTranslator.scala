@@ -3,12 +3,14 @@ package io.kaitai.struct.translators
 import io.kaitai.struct.{ImportList, Utils}
 import io.kaitai.struct.datatype.DataType.EnumType
 import io.kaitai.struct.exprlang.Ast
+import io.kaitai.struct.format.EnumSpec
 
 class CLispTranslator(provider: TypeProvider, importList: ImportList) extends BaseTranslator(provider) {
   // Members declared in io.kaitai.struct.translators.BaseTranslator
   override def bytesToStr(value: String, encoding: String): String = ""
-  override def doEnumById(enumTypeAbs: List[String], id: String): String = ""
-  override def doEnumByLabel(enumTypeAbs: List[String], label: String): String = ""
+  override def doByteArrayLiteral(arr: Seq[Byte]): String = ""
+  override def doEnumByLabel(enumSpec: EnumSpec, label: String): String = ""
+  override def doEnumById(enumSpec: EnumSpec, id: String): String = ""
   override def doIfExp(condition: Ast.expr, ifTrue: Ast.expr, ifFalse: Ast.expr): String = ""
   override def doName(s: String): String = s
 

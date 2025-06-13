@@ -3,7 +3,7 @@ package io.kaitai.struct.translators
 import io.kaitai.struct.datatype.DataType._
 import io.kaitai.struct.exprlang.Ast
 import io.kaitai.struct.exprlang.Ast.expr
-import io.kaitai.struct.format.Identifier
+import io.kaitai.struct.format.{EnumSpec, Identifier}
 import io.kaitai.struct.languages.PHPCompiler
 import io.kaitai.struct.{RuntimeConfig, Utils}
 
@@ -23,7 +23,7 @@ class PHPTranslator(provider: TypeProvider, config: RuntimeConfig) extends BaseT
   override def doByteArrayNonLiteral(elts: Seq[Ast.expr]): String =
     s"pack('C*', ${elts.map(translate).mkString(", ")})"
 
-  // http://php.net/manual/en/language.types.string.php#language.types.string.syntax.double
+  // https://www.php.net/manual/en/language.types.string.php#language.types.string.syntax.double
   override val asciiCharQuoteMap: Map[Char, String] = Map(
     '\t' -> "\\t",
     '\n' -> "\\n",
@@ -42,7 +42,7 @@ class PHPTranslator(provider: TypeProvider, config: RuntimeConfig) extends BaseT
   override def strLiteralUnicode(code: Char): String =
     "\\u{%x}".format(code.toInt)
 
-  override def genericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr, extPrec: Int) = {
+  override def genericBinOp(left: Ast.expr, op: Ast.binaryop, right: Ast.expr, extPrec: Int) = {
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Div) =>
         s"intval(${super.genericBinOp(left, op, right, 0)})"
@@ -68,13 +68,13 @@ class PHPTranslator(provider: TypeProvider, config: RuntimeConfig) extends BaseT
   override def doName(s: String) = s"${Utils.lowerCamelCase(s)}()"
 
   override def doInternalName(id: Identifier): String =
-    s"$$this->${PHPCompiler.publicMemberName(id)}()"
+    PHPCompiler.privateMemberName(id)
 
-  override def doEnumByLabel(enumTypeAbs: List[String], label: String): String = {
-    val enumClass = types2classAbs(enumTypeAbs)
+  override def doEnumByLabel(enumSpec: EnumSpec, label: String): String = {
+    val enumClass = types2classAbs(enumSpec.name)
     s"$enumClass::${Utils.upperUnderscoreCase(label)}"
   }
-  override def doEnumById(enumTypeAbs: List[String], id: String) =
+  override def doEnumById(enumSpec: EnumSpec, id: String): String =
     // Just an integer, without any casts / resolutions - one would have to look up constants manually
     id
 
@@ -103,7 +103,7 @@ class PHPTranslator(provider: TypeProvider, config: RuntimeConfig) extends BaseT
     s"strval(${translate(i)})"
 
   override def bytesToStr(bytesExpr: String, encoding: String): String =
-    s"""${PHPCompiler.kstreamName}::bytesToStr($bytesExpr, "$encoding")"""
+    s"""${PHPCompiler.kstreamName}::bytesToStr($bytesExpr, ${doStringLiteral(encoding)})"""
 
   override def bytesLength(b: Ast.expr): String =
     s"strlen(${translate(b)})"
@@ -129,7 +129,7 @@ class PHPTranslator(provider: TypeProvider, config: RuntimeConfig) extends BaseT
     s"${translate(a)}[0]"
   override def arrayLast(a: expr): String = {
     // For huge debate on efficiency of PHP last element of array methods, see:
-    // http://stackoverflow.com/a/41795859/487064
+    // https://stackoverflow.com/a/41795859/487064
     val v = translate(a)
     s"$v[count($v) - 1]"
   }
