@@ -31,7 +31,7 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   // Members declared in
   // io.kaitai.struct.languages.components.EveryReadIsExpression
-  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Int], include: Boolean): String = ""
+  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Seq[Byte]], include: Boolean): String = ""
   override def handleAssignmentRepeatEos(id: Identifier, expr: String): Unit = ()
   override def handleAssignmentRepeatExpr(id: Identifier, expr: String): Unit = ()
   override def handleAssignmentRepeatUntil(id: Identifier, expr: String, isRaw: Boolean): Unit = ()
