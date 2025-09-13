@@ -149,11 +149,14 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   // Members declared in io.kaitai.struct.languages.components.LanguageCompiler
   override def alignToByte(io: String): Unit = ()
-  override def attrFixedContentsParse(attrName: Identifier, contents: Array[Byte]): Unit = ()
+
+  // Changed upstream to remove unused method
+  // override def attrFixedContentsParse(attrName: Identifier, contents: Array[Byte]): Unit = ()
 
   // override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = {
   //   out.puts("TEST 1")
   // }
+  override def attrParse(attr: AttrLikeSpec, id: Identifier, defEndian: Option[Endianness]): Unit = ()
 
   override def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = ()
 
@@ -217,7 +220,10 @@ class CLispCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   }
 
   override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = ()
-  override def condIfFooter(expr: Ast.expr): Unit = ()
+
+  // Changed upstream to remove expr argument
+  override def condIfFooter: Unit = ()
+
   override def condIfHeader(expr: Ast.expr): Unit = ()
   override def condRepeatEosFooter: Unit = ()
   override def condRepeatEosHeader(id: Identifier, io: String, dataType: DataType): Unit = ()
