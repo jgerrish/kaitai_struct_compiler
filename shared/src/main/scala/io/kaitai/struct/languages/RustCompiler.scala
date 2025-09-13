@@ -16,7 +16,6 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
     with AllocateIOLocalVar
     with EveryReadIsExpression
-    with FixedContentsUsingArrayByteLiteral
     with ObjectOrientedLanguage
     with SingleOutputFile
     with UpperCamelCaseClasses
@@ -239,7 +238,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       fn = s"${fn}_enum"
     }
     {
-      out.puts(s"pub fn $fn(&self) -> Ref<$typeName> {")
+      out.puts(s"pub fn $fn(&self) -> Ref<'_, $typeName> {")
       out.inc
       out.puts(s"self.${idToStr(attrName)}.borrow()")
     }
@@ -521,7 +520,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       typeProvider.nowClass,
       dataType
     )
-    out.puts(s") -> KResult<Ref<$typeName>> {")
+    out.puts(s") -> KResult<Ref<'_, $typeName>> {")
     out.inc
     out.puts(s"let _io = self._io.borrow();")
     out.puts(s"let _rrc = self._root.get_value().borrow().upgrade();")
@@ -846,10 +845,6 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     expr2
   }
 
-  override def attrFixedContentsParse(attrName: Identifier,
-                                      contents: String): Unit =
-    out.puts(s"// attrFixedContentsParse($attrName, $contents)")
-
   override def publicMemberName(id: Identifier): String =
     s"// publicMemberName($id)"
 
@@ -1120,7 +1115,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
                       nativeType = s"$nativeTypeEx"
                       clone = ".clone()"
                     } else
-                      nativeType = s"Ref<$nativeType>"
+                      nativeType = s"Ref<'_, $nativeType>"
                     out.puts(s"pub fn $fn(&self) -> $nativeType {")
                     out.inc
                     out.puts("match self {")
@@ -1190,7 +1185,9 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     attr: AttrLikeSpec,
     checkExpr: Ast.expr,
     err: KSError,
-    errArgs: List[Ast.expr]
+    useIo: Boolean,
+    actual: Ast.expr,
+    expected: Option[Ast.expr] = None
   ): Unit = {
     val srcPathStr = translator.translate(Ast.expr.Str(attr.path.mkString("/", "/", "")))
     val validationKind = RustCompiler.validationErrorKind(err.asInstanceOf[ValidationError])
